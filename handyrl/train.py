@@ -12,6 +12,7 @@ import bz2
 import pickle
 import warnings
 from collections import deque
+from itertools import permutations
 
 import numpy as np
 import torch
@@ -28,6 +29,68 @@ from .losses import compute_target
 from .connection import MultiProcessJobExecutor
 from .connection import accept_socket_connections
 from .worker import WorkerCluster, WorkerServer
+
+
+def augmentation(obs, p, v, act, oc, rew, ret, emask, tmask, omask, amask, progress):
+    '''
+    Flip RL, Flip UD, Permute players affect obs, p, act only.
+    Augmentation creates 24 times many data.
+    '''
+    NUM_AGENTS = 4
+    obss, ps, acts, amasks = [], [], [], []
+
+    for indice in permutations(range(1, NUM_AGENTS)):
+        for flip_lr in (False, True):
+            for flip_ud in (False, True):
+                new_obs = obs.clone().detach()
+                new_p = p.clone().detach()
+                new_act = act.clone().detach()
+                new_amask = amask.clone().detach()
+
+                # Permute by indice
+                for offset, index in enumerate(indice, 1):
+                    new_obs[:, :, :, [offset, offset+NUM_AGENTS, offset+2*NUM_AGENTS, offset+3*NUM_AGENTS]] = \
+                        obs[:, :, :, [index, index+NUM_AGENTS, index+2*NUM_AGENTS, index+3*NUM_AGENTS]]
+
+                # Flip LR
+                if flip_lr:
+                    new_p[:, :, :, 2], new_p[:, :, :, 3] = p[:, :, :, 3], p[:, :, :, 2]
+                    new_amask[:, :, :, 2], new_amask[:, :, :, 3] = amask[:, :, :, 3], amask[:, :, :, 2]
+
+                    new_act = torch.where(new_act == 2, -1, new_act)
+                    new_act = torch.where(new_act == 3, 2, new_act)
+                    new_act = torch.where(new_act == -1, 3, new_act)
+
+                # Flip UD
+                if flip_ud:
+                    new_p[:, :, :, 0], new_p[:, :, :, 1] = p[:, :, :, 1], p[:, :, :, 0]
+                    new_amask[:, :, :, 0], new_amask[:, :, :, 1] = amask[:, :, :, 1], amask[:, :, :, 0]
+
+                    new_act = torch.where(new_act == 0, -1, new_act)
+                    new_act = torch.where(new_act == 1, 0, new_act)
+                    new_act = torch.where(new_act == -1, 1, new_act)
+
+                obss.append(new_obs)
+                ps.append(new_p)
+                acts.append(new_act)
+                amasks.append(new_amask)
+
+    obs = torch.cat(obss, dim=0)
+    p = torch.cat(ps, dim=0)
+    act = torch.cat(acts, dim=0)
+    amask = torch.cat(amasks, dim=0)
+
+    # Repeat only the first dimension
+    v = v.repeat(24, *([1] * (len(v.size()) - 1)))
+    oc = oc.repeat(24, *([1] * (len(oc.size()) - 1)))
+    rew = rew.repeat(24, *([1] * (len(rew.size()) - 1)))
+    ret = ret.repeat(24, *([1] * (len(ret.size()) - 1)))
+    emask = emask.repeat(24, *([1] * (len(emask.size()) - 1)))
+    tmask = tmask.repeat(24, *([1] * (len(tmask.size()) - 1)))
+    omask = omask.repeat(24, *([1] * (len(omask.size()) - 1)))
+    progress = progress.repeat(24, *([1] * (len(progress.size()) - 1)))
+
+    return obs, p, v, act, oc, rew, ret, emask, tmask, omask, amask, progress
 
 
 def make_batch(episodes, args):
@@ -120,6 +183,10 @@ def make_batch(episodes, args):
     omask = to_torch(np.array(omask))
     amask = to_torch(np.array(amask))
     progress = to_torch(np.array(progress))
+
+    if args['augmentation']:
+        obs, p, v, act, oc, rew, ret, emask, tmask, omask, amask, progress = \
+            augmentation(obs, p, v, act, oc, rew, ret, emask, tmask, omask, amask, progress)
 
     return {
         'observation': obs,
