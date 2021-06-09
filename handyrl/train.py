@@ -384,6 +384,7 @@ class Trainer:
         self.model = model
         self.default_lr = 3e-8
         self.data_cnt_ema = self.args['batch_size'] * self.args['forward_steps']
+        # self.data_cnt_ema = 1
         self.params = list(self.model.parameters())
         lr = self.default_lr * self.data_cnt_ema
         self.optimizer = optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
@@ -447,8 +448,13 @@ class Trainer:
 
             losses, dcnt = compute_loss(batch, self.trained_model, hidden, self.args)
 
+            try:
+                loss = losses['total'] / dcnt
+            except ZeroDivisionError:
+                loss = losses['total']
+
             self.optimizer.zero_grad()
-            losses['total'].backward()
+            loss.backward()
             nn.utils.clip_grad_norm_(self.params, 4.0)
             self.optimizer.step()
 
