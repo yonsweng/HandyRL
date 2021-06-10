@@ -382,7 +382,7 @@ class Trainer:
         self.args = args
         self.gpu = torch.cuda.device_count()
         self.model = model
-        self.default_lr = 1e-5
+        self.default_lr = 3e-5
         # self.data_cnt_ema = self.args['batch_size'] * self.args['forward_steps']
         self.data_cnt_ema = 1
         self.params = list(self.model.parameters())
