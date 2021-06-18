@@ -24,13 +24,11 @@ class TorusConv2d(nn.Module):
     def __init__(self, input_dim, output_dim, kernel_size, bn):
         super().__init__()
         self.edge_size = (kernel_size[0] // 2, kernel_size[1] // 2)
-        self.conv = nn.Conv2d(input_dim, output_dim, kernel_size=kernel_size)
+        self.conv = nn.Conv2d(input_dim, output_dim, kernel_size=kernel_size, padding=self.edge_size, padding_mode='circular')
         self.bn = nn.BatchNorm2d(output_dim) if bn else None
 
     def forward(self, x):
-        h = torch.cat([x[:,:,:,-self.edge_size[1]:], x, x[:,:,:,:self.edge_size[1]]], dim=3)
-        h = torch.cat([h[:,:,-self.edge_size[0]:], h, h[:,:,:self.edge_size[0]]], dim=2)
-        h = self.conv(h)
+        h = self.conv(x)
         h = self.bn(h) if self.bn is not None else h
         return h
 
@@ -233,6 +231,54 @@ class Environment(BaseEnvironment):
             b[16, pos] = 1
 
         return b.reshape(-1, 7, 11)
+
+
+def random_transform(obs, p, act, amask, NUM_AGENTS=4):
+    '''
+    Flip RL, Flip UD, Permute players affect obs, p, act, amask only.
+    '''
+
+    indice = random.choice(tuple(itertools.permutations(range(1, NUM_AGENTS))))
+    flip_lr = random.choice((False, True))
+    flip_ud = random.choice((False, True))
+
+    new_obs = obs.clone().detach()
+    new_p = p.clone().detach()
+    new_act = act.clone().detach()
+    new_amask = amask.clone().detach()
+
+    # Permute by indice
+    for offset, index in enumerate(indice, 1):
+        new_obs[:, :, :, [offset, offset+NUM_AGENTS, offset+2*NUM_AGENTS, offset+3*NUM_AGENTS]] = \
+            obs[:, :, :, [index, index+NUM_AGENTS, index+2*NUM_AGENTS, index+3*NUM_AGENTS]]
+
+    # Flip LR
+    if flip_lr:
+        # Flip new_obs
+        idx = [i for i in range(new_obs.size(-1) - 1, -1, -1)]
+        idx = torch.LongTensor(idx)
+        new_obs = new_obs.index_select(-1, idx)
+
+        new_p[:, :, :, 2], new_p[:, :, :, 3] = p[:, :, :, 3], p[:, :, :, 2]
+        new_amask[:, :, :, 2], new_amask[:, :, :, 3] = amask[:, :, :, 3], amask[:, :, :, 2]
+        new_act = torch.where(new_act == 2, -1, new_act)
+        new_act = torch.where(new_act == 3, 2, new_act)
+        new_act = torch.where(new_act == -1, 3, new_act)
+
+    # Flip UD
+    if flip_ud:
+        # Flip new_obs
+        idx = [i for i in range(new_obs.size(-2) - 1, -1, -1)]
+        idx = torch.LongTensor(idx)
+        new_obs = new_obs.index_select(-2, idx)
+
+        new_p[:, :, :, 0], new_p[:, :, :, 1] = p[:, :, :, 1], p[:, :, :, 0]
+        new_amask[:, :, :, 0], new_amask[:, :, :, 1] = amask[:, :, :, 1], amask[:, :, :, 0]
+        new_act = torch.where(new_act == 0, -1, new_act)
+        new_act = torch.where(new_act == 1, 0, new_act)
+        new_act = torch.where(new_act == -1, 1, new_act)
+
+    return new_obs, new_p, new_act, new_amask
 
 
 if __name__ == '__main__':
